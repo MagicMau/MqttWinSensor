@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Threading;
 using Hardcodet.Wpf.TaskbarNotification;
 using ManagedNativeWifi;
 using Microsoft.Win32;
@@ -24,213 +25,125 @@ namespace MqttWinSensor
     /// </summary>
     public partial class App : Application
     {
-        private MqttFactory mqttFactory = new();
-        private MqttClientOptions? clientOptions = null;
-        private JsonSerializerSettings serializerSettings = new();
-        private bool isRegistered = false;
-        private string? lastReason = null;
-        private bool isExiting = false;
+        private readonly MqttBinarySensor mqttBinarySensor;
+        private readonly CancellationTokenSource cancellationTokenSource = new();
+        private readonly DispatcherTimer dispatcherTimer = new DispatcherTimer();
+        private string lastToolTipText = string.Empty;
 
-        // config values
-        private readonly bool isCheckForPower = "true".Equals(ConfigurationManager.AppSettings["check_if_on_power"], StringComparison.OrdinalIgnoreCase);
-        private readonly bool isCheckForWifi = "true".Equals(ConfigurationManager.AppSettings["check_if_on_wireless_network"], StringComparison.OrdinalIgnoreCase);
-        private readonly string brokerUri = ConfigurationManager.AppSettings["mqtt_broker_uri"] ?? string.Empty;
-        private readonly string brokerUser = ConfigurationManager.AppSettings["mqtt_broker_user"] ?? string.Empty;
-        private readonly string brokerPassword = ConfigurationManager.AppSettings["mqtt_broker_pwd"] ?? string.Empty;
-        private readonly string wifiNetworksText = ConfigurationManager.AppSettings["wireless_networks"] ?? string.Empty;
-        private readonly string wifiTextDelimiter = ConfigurationManager.AppSettings["wireless_networks_delimiter"] ?? string.Empty;
-        
-        private string[] wifiNetworks = Array.Empty<string>();
-
-        protected async override void OnStartup(StartupEventArgs e)
+        public App()
         {
-            serializerSettings.ContractResolver = new DefaultContractResolver
+            bool isCheckForPower = "true".Equals(ConfigurationManager.AppSettings["check_if_on_power"], StringComparison.OrdinalIgnoreCase);
+            bool isCheckForWifi = "true".Equals(ConfigurationManager.AppSettings["check_if_on_wireless_network"], StringComparison.OrdinalIgnoreCase);
+            string brokerUri = ConfigurationManager.AppSettings["mqtt_broker_uri"] ?? string.Empty;
+            string brokerUser = ConfigurationManager.AppSettings["mqtt_broker_user"] ?? string.Empty;
+            string brokerPassword = ConfigurationManager.AppSettings["mqtt_broker_pwd"] ?? string.Empty;
+            string expireAfterText = ConfigurationManager.AppSettings["mqtt_expire_after"] ?? string.Empty;
+            string wifiNetworksText = ConfigurationManager.AppSettings["wireless_networks"] ?? string.Empty;
+            string wifiTextDelimiter = ConfigurationManager.AppSettings["wireless_networks_delimiter"] ?? string.Empty;
+            int expireAfter = -1;
+
+            try
             {
-                NamingStrategy = new SnakeCaseNamingStrategy()
-            };
+                expireAfter = Convert.ToInt32(expireAfterText);
+                dispatcherTimer.Interval = TimeSpan.FromSeconds((expireAfter > 1 ? Math.Max(1, expireAfter) : 0) / 2);
+            }
+            catch
+            {
+                dispatcherTimer.Interval = TimeSpan.Zero;
+            }
 
-            wifiNetworks = wifiNetworksText.Split(wifiTextDelimiter, StringSplitOptions.RemoveEmptyEntries);
+            mqttBinarySensor = new MqttBinarySensor(new MqttBinarySensorOptions
+            {
+                BrokerUri = brokerUri,
+                BrokerUsername = brokerUser,
+                BrokerPassword = brokerPassword,
+                ExpireAfter = expireAfter,
+                IsCheckForPower = isCheckForPower,
+                IsCheckForWifi = isCheckForWifi,
+                WifiNetworks = wifiNetworksText.Split(wifiTextDelimiter, StringSplitOptions.RemoveEmptyEntries),
+            });
+        }
 
+        /// <summary>
+        /// Update the notification icon's tooltip text. Also save the text in case we are not able to 
+        /// update the icon yet.
+        /// </summary>
+        /// <param name="text"></param>
+        public void SetTooltip(string? text = null)
+        {
+            if (string.IsNullOrEmpty(text))
+                text = lastToolTipText;
+            else
+            {
+                Trace.TraceInformation("Reason: " + text);
+                lastToolTipText = text;
+            }
 
-            // register with HomeAssistant
-            if (await IsConnectedToHome())
-                await RegisterWithHomeAssistant();
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (MainWindow is MainWindow wnd)
+                {
+                    wnd.TaskbarIcon.ToolTipText = "MQTT Sensor: " + Environment.MachineName + (text == null ? "" : " | " + text);
+                }
+            }));
+        }
+
+        /// <summary>
+        /// When starting up, register for the session events and start the dispatcher timer.
+        /// </summary>
+        /// <param name="e"></param>
+        protected override async void OnStartup(StartupEventArgs e)
+        {
+            await UpdateStateAsync(true, "Started");
 
             SystemEvents.SessionSwitch += SystemEvents_SessionSwitch;
+
+            dispatcherTimer.Tick += DispatcherTimer_Tick;
+            if (dispatcherTimer.Interval > TimeSpan.Zero)
+                dispatcherTimer.Start();
         }
 
         protected override void OnExit(ExitEventArgs e)
         {
             base.OnExit(e);
-            isExiting = true;
+            dispatcherTimer.Stop();
 
             Task.Run(async () =>
             {
-                await PublishMqttMessage("state", "OFF", "Exited");
-                await PublishMqttMessage("available", "offline", "Exited");
-            }).Wait();
+                await UpdateStateAsync(false, "Exited");
+            }).Wait(cancellationTokenSource.Token);
 
+            cancellationTokenSource.Cancel();
             SystemEvents.SessionSwitch -= SystemEvents_SessionSwitch;
+        }
+
+        private async Task<bool> UpdateAvailabilityAsync(bool isAvailable, string reason)
+        {
+            SetTooltip(reason);
+            return await mqttBinarySensor.UpdateAvailabilityAsync(isAvailable, cancellationTokenSource.Token);
+        }
+
+        private async Task<bool> UpdateStateAsync(bool isEnabled, string reason)
+        {
+            SetTooltip(reason);
+            return await mqttBinarySensor.UpdateStateAsync(isEnabled, cancellationTokenSource.Token);
         }
 
         private async void SystemEvents_SessionSwitch(object sender, SessionSwitchEventArgs e)
         {
             switch (e.Reason)
             {
-                case SessionSwitchReason.SessionLogon: await PublishMqttMessage("state", "ON", "Logged On"); break;
-                case SessionSwitchReason.SessionLogoff: await PublishMqttMessage("state", "OFF", "Logged Off"); break;
-                case SessionSwitchReason.SessionLock: await PublishMqttMessage("state", "OFF", "Locked"); break;
-                case SessionSwitchReason.SessionUnlock: await PublishMqttMessage("state", "ON", "Unlocked"); break;
+                case SessionSwitchReason.SessionLogon: await UpdateStateAsync(true, "Logged On"); break;
+                case SessionSwitchReason.SessionLogoff: await UpdateStateAsync(false, "Logged Off"); break;
+                case SessionSwitchReason.SessionLock: await UpdateStateAsync(false, "Locked"); break;
+                case SessionSwitchReason.SessionUnlock: await UpdateStateAsync(true, "Unlocked"); break;
             }
         }
 
-        private MqttClientOptions CreateMqttClientOptions()
+        private async void DispatcherTimer_Tick(object? sender, EventArgs e)
         {
-            if (clientOptions == null)
-                clientOptions = new MqttClientOptionsBuilder()
-                        .WithWebSocketServer(brokerUri)
-                        .WithCredentials(brokerUser, brokerPassword)
-                        .Build();
-
-            return clientOptions;
-        }
-
-        public async Task PublishMqttMessage(string topic, string message, string reason)
-        {
-            if (!(await IsConnectedToHome()))
-                return;
-
-            if (!isRegistered)
-            {
-                if (!(await RegisterWithHomeAssistant()))
-                    return;
-            }
-
-            try
-            {
-                using (var mqttClient = mqttFactory.CreateMqttClient())
-                {
-                    var mqttClientOptions = CreateMqttClientOptions();
-
-                    // This will throw an exception if the server is not available.
-                    // The result from this message returns additional data which was sent 
-                    // from the server. Please refer to the MQTT protocol specification for details.
-                    await mqttClient.ConnectAsync(mqttClientOptions, CancellationToken.None);
-
-                    var applicationMessage = new MqttApplicationMessageBuilder()
-                        .WithTopic($"winpc/{Environment.MachineName}/{topic}")
-                        .WithPayload(message)
-                        .Build();
-
-                    await mqttClient.PublishAsync(applicationMessage, CancellationToken.None);
-
-                    await mqttClient.DisconnectAsync();
-
-                    SetTooltip(reason);
-                }
-            }
-            catch (Exception e) {
-                SetTooltip("ERROR: " + e.Message);
-            }
-        }
-
-        internal void SetTooltip(string? text = null)
-        {
-            if (!isExiting && this.MainWindow is MainWindow wnd)
-            {
-                if (text == null) {
-                    text = lastReason;
-                }
-                try
-                {
-                    wnd.TaskbarIcon.ToolTipText = "MQTT Sensor: " + Environment.MachineName + (text == null ? "" : " | " + text);
-                }
-                catch { }
-            }
-            lastReason = text;
-        }
-
-        private async Task<bool> IsConnectedToHome()
-        {
-            for (int attempt = 0; attempt < 10; attempt++)
-            {
-                if (attempt > 0)
-                {
-                    await Task.Delay(1000); // wait 1 second
-                }
-
-                if (!IsOnPower())
-                {
-                    SetTooltip("not connected to power");
-                    continue;
-                }
-
-                if (!isCheckForWifi)
-                    return true;
-
-                var networks = NativeWifi.EnumerateConnectedNetworkSsids();
-                bool isConnectedToHome = networks.Any(n => wifiNetworks.Any(w => w.Equals(n.ToString(), StringComparison.OrdinalIgnoreCase)));
-
-                SetTooltip((isConnectedToHome ? "" : "not ") + "connected to home network");
-                
-                if (isConnectedToHome)
-                    return true;
-            }
-
-            return false;
-        }
-
-        private bool IsOnPower()
-        {
-            if (!isCheckForPower) return true;
-
-            return System.Windows.Forms.SystemInformation.PowerStatus.PowerLineStatus != System.Windows.Forms.PowerLineStatus.Offline;
-        }
-
-        protected async Task<bool> RegisterWithHomeAssistant()
-        {
-            if (!(await IsConnectedToHome()))
-                return false;
-
-            SetTooltip("registering");
-            try
-            {
-                using (var mqttClient = mqttFactory.CreateMqttClient())
-                {
-                    var mqttClientOptions = CreateMqttClientOptions();
-
-                    // This will throw an exception if the server is not available.
-                    // The result from this message returns additional data which was sent 
-                    // from the server. Please refer to the MQTT protocol specification for details.
-                    await mqttClient.ConnectAsync(mqttClientOptions, CancellationToken.None);
-
-                    var applicationMessage = new MqttApplicationMessageBuilder()
-                        .WithTopic($"homeassistant/binary_sensor/{Environment.MachineName}/config")
-                        .WithPayload(JsonConvert.SerializeObject(new
-                        {
-                            name = Environment.MachineName,
-                            deviceClass = "lock",
-                            stateTopic = $"winpc/{Environment.MachineName}/state",
-                            availabilityTopic = $"winpc/{Environment.MachineName}/available",
-                        }, serializerSettings))
-                        .WithRetainFlag()
-                        .Build();
-
-                    await mqttClient.PublishAsync(applicationMessage, CancellationToken.None);
-
-                    await mqttClient.DisconnectAsync();
-                    isRegistered = true;
-
-                    await PublishMqttMessage("available", "online", "Started");
-                    await PublishMqttMessage("state", "ON", "Started");
-                    return true;
-                }
-            }
-            catch (Exception e) {
-                SetTooltip("ERROR initializing: " + e.Message);
-            }
-
-            return false;
+            if (mqttBinarySensor.IsRegistered)
+                await mqttBinarySensor.ResendStateAsync(cancellationTokenSource.Token);
         }
     }
 }
