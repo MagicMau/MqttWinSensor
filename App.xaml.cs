@@ -117,12 +117,6 @@ namespace MqttWinSensor
             SystemEvents.SessionSwitch -= SystemEvents_SessionSwitch;
         }
 
-        private async Task<bool> UpdateAvailabilityAsync(bool isAvailable, string reason)
-        {
-            SetTooltip(reason);
-            return await mqttBinarySensor.UpdateAvailabilityAsync(isAvailable, cancellationTokenSource.Token);
-        }
-
         private async Task<bool> UpdateStateAsync(bool isEnabled, string reason)
         {
             SetTooltip(reason);

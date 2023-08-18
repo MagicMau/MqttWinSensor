@@ -50,15 +50,6 @@ namespace MqttWinSensor
         }
 
         /// <summary>
-        /// Update the sensor's availability
-        /// </summary>
-        /// <param name="isAvailable"></param>
-        /// <param name="cancellationToken"></param>
-        /// <returns></returns>
-        public Task<bool> UpdateAvailabilityAsync(bool isAvailable, CancellationToken cancellationToken) => 
-            PublishAsync(CreateAvailabilityMessage(isAvailable), cancellationToken);
-
-        /// <summary>
         /// Update the sensor's state
         /// </summary>
         /// <param name="isEnabled"></param>
@@ -85,8 +76,6 @@ namespace MqttWinSensor
                             uniqueId = "binary_sensor.winpc." + Environment.MachineName,
                             deviceClass = "lock",
                             stateTopic = $"winpc/{Environment.MachineName}/state",
-                            availabilityTopic = $"winpc/{Environment.MachineName}/available",
-                            expireAfter = options.ExpireAfter > 1 ? options.ExpireAfter.ToString() : null,
                             offDelay = options.ExpireAfter > 1 ? options.ExpireAfter.ToString() : null,
                         }, serializerSettings))
                         .WithRetainFlag()
@@ -95,16 +84,6 @@ namespace MqttWinSensor
 
             IsRegistered = await PublishWithNoCheckAsync(applicationMessages, cancellationToken);
             return IsRegistered;
-        }
-
-        /// <summary>
-        /// Create an ApplicationMessage about availability of the sensor.
-        /// </summary>
-        /// <param name="isAvailable"></param>
-        /// <returns></returns>
-        private static MqttApplicationMessage CreateAvailabilityMessage(bool isAvailable)
-        {
-            return CreateApplicationMessage("available", isAvailable ? "online" : "offline");
         }
 
         /// <summary>
