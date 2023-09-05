@@ -26,8 +26,9 @@ namespace MqttWinSensor
     public partial class App : Application
     {
         private readonly MqttBinarySensor mqttBinarySensor;
+        private readonly TeamsPresenceIndicator? teamsPresenceIndicator;
         private readonly CancellationTokenSource cancellationTokenSource = new();
-        private readonly DispatcherTimer dispatcherTimer = new DispatcherTimer();
+        private readonly DispatcherTimer dispatcherTimer = new();
         private string lastToolTipText = string.Empty;
 
         public App()
@@ -37,10 +38,13 @@ namespace MqttWinSensor
             string brokerUri = ConfigurationManager.AppSettings["mqtt_broker_uri"] ?? string.Empty;
             string brokerUser = ConfigurationManager.AppSettings["mqtt_broker_user"] ?? string.Empty;
             string brokerPassword = ConfigurationManager.AppSettings["mqtt_broker_pwd"] ?? string.Empty;
-            string expireAfterText = ConfigurationManager.AppSettings["mqtt_expire_after"] ?? string.Empty;
+            string expireAfterText = ConfigurationManager.AppSettings["mqtt_expire_after"] ?? "600";
             string wifiNetworksText = ConfigurationManager.AppSettings["wireless_networks"] ?? string.Empty;
-            string wifiTextDelimiter = ConfigurationManager.AppSettings["wireless_networks_delimiter"] ?? string.Empty;
+            string wifiTextDelimiter = ConfigurationManager.AppSettings["wireless_networks_delimiter"] ?? ";";
             int expireAfter = -1;
+            bool isMonitorTeamsPresence = "true".Equals(ConfigurationManager.AppSettings["monitor_teams_presence"], StringComparison.OrdinalIgnoreCase);
+            string monitorIntervalText = ConfigurationManager.AppSettings["monitor_teams_interval"] ?? "600";
+            int monitorInterval = -1;
 
             try
             {
@@ -50,6 +54,14 @@ namespace MqttWinSensor
             catch
             {
                 dispatcherTimer.Interval = TimeSpan.Zero;
+            }
+
+            try
+            {
+                monitorInterval = Convert.ToInt32(monitorIntervalText);
+            }
+            catch
+            {
             }
 
             mqttBinarySensor = new MqttBinarySensor(new MqttBinarySensorOptions
@@ -62,6 +74,22 @@ namespace MqttWinSensor
                 IsCheckForWifi = isCheckForWifi,
                 WifiNetworks = wifiNetworksText.Split(wifiTextDelimiter, StringSplitOptions.RemoveEmptyEntries),
             });
+
+            if (isMonitorTeamsPresence)
+            {
+                teamsPresenceIndicator = new TeamsPresenceIndicator(new TeamsPresenceIndicatorOptions
+                {
+                    BrokerUri = brokerUri,
+                    BrokerUsername = brokerUser,
+                    BrokerPassword = brokerPassword,
+                    ExpireAfter = expireAfter,
+                    IsCheckForPower = isCheckForPower,
+                    IsCheckForWifi = isCheckForWifi,
+                    WifiNetworks = wifiNetworksText.Split(wifiTextDelimiter, StringSplitOptions.RemoveEmptyEntries),
+                    PollingInterval = monitorInterval,
+                });
+                teamsPresenceIndicator.Start(cancellationTokenSource.Token);
+            }
         }
 
         /// <summary>
@@ -107,6 +135,7 @@ namespace MqttWinSensor
         {
             base.OnExit(e);
             dispatcherTimer.Stop();
+            teamsPresenceIndicator?.Stop();
 
             Task.Run(async () =>
             {
