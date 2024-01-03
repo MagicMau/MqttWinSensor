@@ -123,6 +123,21 @@ namespace MqttWinSensor
         /// <returns></returns>
         protected async Task<bool> PublishAsync(MqttApplicationMessage[] applicationMessages, CancellationToken cancellationToken)
         {
+            int attempts = 0;
+
+            while (attempts < 5)
+            {
+                if (await PublishAsync(applicationMessages, attempts, cancellationToken))
+                    return true;
+
+                await Task.Delay(2000, cancellationToken);
+            }
+
+            return false;
+        }
+
+        protected async Task<bool> PublishAsync(MqttApplicationMessage[] applicationMessages, int attempt, CancellationToken cancellationToken)
+        {
             if (options.IsCheckForPower)
             {
                 if (!CheckForPower())
