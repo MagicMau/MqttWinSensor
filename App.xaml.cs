@@ -4,6 +4,7 @@ using System.Configuration;
 using System.Data;
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -30,6 +31,7 @@ namespace MqttWinSensor
         private readonly CancellationTokenSource cancellationTokenSource = new();
         private readonly DispatcherTimer dispatcherTimer = new();
         private string lastToolTipText = string.Empty;
+        private string hyperionRemotePath = string.Empty;
 
         public App()
         {
@@ -45,6 +47,7 @@ namespace MqttWinSensor
             bool isMonitorTeamsPresence = "true".Equals(ConfigurationManager.AppSettings["monitor_teams_presence"], StringComparison.OrdinalIgnoreCase);
             string monitorIntervalText = ConfigurationManager.AppSettings["monitor_teams_interval"] ?? "600";
             int monitorInterval = -1;
+            hyperionRemotePath = ConfigurationManager.AppSettings["hyperion_remote_path"] ?? string.Empty;
 
             try
             {
@@ -90,6 +93,12 @@ namespace MqttWinSensor
                 });
                 teamsPresenceIndicator.Start(cancellationTokenSource.Token);
             }
+
+            if (!Path.Exists(hyperionRemotePath) || !hyperionRemotePath.EndsWith("hyperion-remote.exe"))
+            {
+                hyperionRemotePath = string.Empty;
+            }
+
         }
 
         /// <summary>
@@ -129,9 +138,11 @@ namespace MqttWinSensor
             dispatcherTimer.Tick += DispatcherTimer_Tick;
             if (dispatcherTimer.Interval > TimeSpan.Zero)
                 dispatcherTimer.Start();
+
+            await RunHyperionRemote(true);
         }
 
-        protected override void OnExit(ExitEventArgs e)
+        protected override async void OnExit(ExitEventArgs e)
         {
             base.OnExit(e);
             dispatcherTimer.Stop();
@@ -141,6 +152,8 @@ namespace MqttWinSensor
             {
                 await UpdateStateAsync(false, "Exited");
             }).Wait(cancellationTokenSource.Token);
+
+            await RunHyperionRemote(false);
 
             cancellationTokenSource.Cancel();
             SystemEvents.SessionSwitch -= SystemEvents_SessionSwitch;
@@ -154,13 +167,48 @@ namespace MqttWinSensor
 
         private async void SystemEvents_SessionSwitch(object sender, SessionSwitchEventArgs e)
         {
+            bool isEnabled = false;
+            string reason = string.Empty;
             switch (e.Reason)
             {
-                case SessionSwitchReason.SessionLogon: await UpdateStateAsync(true, "Logged On"); break;
-                case SessionSwitchReason.SessionLogoff: await UpdateStateAsync(false, "Logged Off"); break;
-                case SessionSwitchReason.SessionLock: await UpdateStateAsync(false, "Locked"); break;
-                case SessionSwitchReason.SessionUnlock: await UpdateStateAsync(true, "Unlocked"); break;
+                case SessionSwitchReason.SessionLogon: isEnabled = true; reason = "Logged On"; break;
+                case SessionSwitchReason.SessionLogoff: isEnabled = false; reason = "Logged Off"; break;
+                case SessionSwitchReason.SessionLock: isEnabled = false; reason = "Locked"; break;
+                case SessionSwitchReason.SessionUnlock: isEnabled = true; reason = "Unlocked"; break;
             }
+
+            if ((await UpdateStateAsync(isEnabled, reason)))
+            {
+                await RunHyperionRemote(isEnabled);
+            }
+        }
+
+        private async Task RunHyperionRemote(bool isEnabled)
+        {
+            int screenCount = System.Windows.Forms.Screen.AllScreens.Length;
+
+            if (string.IsNullOrEmpty(hyperionRemotePath) || screenCount == 1)
+                return;
+
+            var startInfo = new ProcessStartInfo(hyperionRemotePath)
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                WindowStyle = ProcessWindowStyle.Hidden,
+                RedirectStandardOutput = true,
+                Arguments = isEnabled ? "--resume" : "--suspend"
+            };
+            try
+            {
+                using Process? process = Process.Start(startInfo);
+                if (process != null)
+                {
+                    await process.WaitForExitAsync(cancellationTokenSource.Token);
+                    string output = process.StandardOutput.ReadToEnd();
+                    Trace.TraceInformation(output);
+                }
+            }
+            catch { }
         }
 
         private async void DispatcherTimer_Tick(object? sender, EventArgs e)

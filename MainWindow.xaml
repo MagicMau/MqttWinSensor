@@ -9,8 +9,7 @@
         Title="MainWindow" Height="450" Width="800" Visibility="Hidden" ShowInTaskbar="False" Icon="/homeassistant.ico">
     <Grid>
         <tb:TaskbarIcon
-            x:Name="TaskbarIcon"
-            IconSource="/mqtt_icon.ico">
+            x:Name="TaskbarIcon" IconSource="/taskbaricon.ico">
             <tb:TaskbarIcon.ContextMenu>
                 <ContextMenu>
                     <MenuItem Header="_Quit" Click="MenuItem_Click" />

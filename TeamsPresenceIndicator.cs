@@ -52,11 +52,15 @@ namespace MqttWinSensor
         {
             this.cancellationToken = cancellationToken;
             timer.Interval = TimeSpan.FromSeconds(options.PollingInterval);
-            ReadTeamsLogsFile();
-            timer.Start();
+
+            if (Path.Exists(logsPath))
+            {
+                ReadTeamsLogsFile();
+                timer.Start();
+            }
         }
 
-        public void Stop() 
+        public void Stop()
         {
             timer.Stop();
         }
