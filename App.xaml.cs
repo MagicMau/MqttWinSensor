@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Management;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -29,7 +30,7 @@ namespace MqttWinSensor
         private readonly MqttBinarySensor mqttBinarySensor;
         private readonly TeamsPresenceIndicator? teamsPresenceIndicator;
         private readonly CancellationTokenSource cancellationTokenSource = new();
-        private readonly DispatcherTimer dispatcherTimer = new();
+        private readonly DispatcherTimer dispatcherTimer = new() { IsEnabled = false };
         private string lastToolTipText = string.Empty;
         private string hyperionRemotePath = string.Empty;
 
@@ -48,6 +49,7 @@ namespace MqttWinSensor
             string monitorIntervalText = ConfigurationManager.AppSettings["monitor_teams_interval"] ?? "600";
             int monitorInterval = -1;
             hyperionRemotePath = ConfigurationManager.AppSettings["hyperion_remote_path"] ?? string.Empty;
+            string comPort = ConfigurationManager.AppSettings["check_com_port"] ?? string.Empty;
 
             try
             {
@@ -75,6 +77,7 @@ namespace MqttWinSensor
                 ExpireAfter = expireAfter,
                 IsCheckForPower = isCheckForPower,
                 IsCheckForWifi = isCheckForWifi,
+                CheckComPort = comPort,
                 WifiNetworks = wifiNetworksText.Split(wifiTextDelimiter, StringSplitOptions.RemoveEmptyEntries),
             });
 
@@ -91,14 +94,12 @@ namespace MqttWinSensor
                     WifiNetworks = wifiNetworksText.Split(wifiTextDelimiter, StringSplitOptions.RemoveEmptyEntries),
                     PollingInterval = monitorInterval,
                 });
-                teamsPresenceIndicator.Start(cancellationTokenSource.Token);
             }
 
             if (!Path.Exists(hyperionRemotePath) || !hyperionRemotePath.EndsWith("hyperion-remote.exe"))
             {
                 hyperionRemotePath = string.Empty;
             }
-
         }
 
         /// <summary>
@@ -139,6 +140,8 @@ namespace MqttWinSensor
             if (dispatcherTimer.Interval > TimeSpan.Zero)
                 dispatcherTimer.Start();
 
+            if (teamsPresenceIndicator != null)
+                teamsPresenceIndicator.Start(cancellationTokenSource.Token);
             await RunHyperionRemote(true);
         }
 
@@ -185,9 +188,7 @@ namespace MqttWinSensor
 
         private async Task RunHyperionRemote(bool isEnabled)
         {
-            int screenCount = System.Windows.Forms.Screen.AllScreens.Length;
-
-            if (string.IsNullOrEmpty(hyperionRemotePath) || screenCount == 1)
+            if (string.IsNullOrEmpty(hyperionRemotePath))
                 return;
 
             var startInfo = new ProcessStartInfo(hyperionRemotePath)

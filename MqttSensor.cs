@@ -11,6 +11,10 @@ using static System.Windows.Forms.Design.AxImporter;
 using ManagedNativeWifi;
 using System.Threading;
 using System.Windows.Forms;
+using System.Diagnostics;
+using Windows.Devices.Usb;
+using System.Management;
+using Microsoft.Win32;
 
 namespace MqttWinSensor
 {
@@ -89,16 +93,16 @@ namespace MqttWinSensor
         {
             currentState = state;
             return CreateApplicationMessage("state", state);
-    }
+        }
 
 
-    /// <summary>
-    /// Create an ApplicationMessage with the given topic and payload.
-    /// </summary>
-    /// <param name="topic"></param>
-    /// <param name="payload"></param>
-    /// <returns></returns>
-    protected MqttApplicationMessage CreateApplicationMessage(string topic, string payload)
+        /// <summary>
+        /// Create an ApplicationMessage with the given topic and payload.
+        /// </summary>
+        /// <param name="topic"></param>
+        /// <param name="payload"></param>
+        /// <returns></returns>
+        protected MqttApplicationMessage CreateApplicationMessage(string topic, string payload)
         {
             return new MqttApplicationMessageBuilder()
                 .WithTopic(options.Topic + "/" + topic)
@@ -147,6 +151,12 @@ namespace MqttWinSensor
             if (options.IsCheckForWifi)
             {
                 if (!CheckForWifi())
+                    return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(options.CheckComPort))
+            {
+                if (!CheckComPort(options.CheckComPort))
                     return false;
             }
 
@@ -212,5 +222,53 @@ namespace MqttWinSensor
         {
             return SystemInformation.PowerStatus.PowerLineStatus != PowerLineStatus.Offline;
         }
+
+        private static bool CheckComPort(string comPort)
+        {
+            var serialDevices = GetSerialDevices();
+
+            foreach (var serialDevice in serialDevices)
+            {
+                // grab the com port from the registry
+                string regPath = "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Enum\\" + serialDevice.DeviceID + "\\Device Parameters";
+                string portName = Registry.GetValue(regPath, "PortName", "")?.ToString() ?? string.Empty;
+
+                if (portName.Equals(comPort, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Bit from here https://stackoverflow.com/a/75360065
+        /// and a bit from here https://stackoverflow.com/a/3331509
+        /// </summary>
+        /// <returns></returns>
+        private static List<USBDeviceInfo> GetSerialDevices()
+        {
+            List<USBDeviceInfo> devices = new List<USBDeviceInfo>();
+
+            using var searcher = new ManagementObjectSearcher(
+                @"Select * From Win32_PnPEntity");
+            using ManagementObjectCollection collection = searcher.Get();
+
+            foreach (var device in collection)
+            {
+                var guid = ((string?)device.GetPropertyValue("ClassGuid"))?.ToUpperInvariant();
+                if ("{4D36E978-E325-11CE-BFC1-08002BE10318}".Equals(guid))
+                {
+                    devices.Add(new USBDeviceInfo(
+                        (string)device.GetPropertyValue("DeviceID"),
+                        (string)device.GetPropertyValue("PNPDeviceID"),
+                        (string)device.GetPropertyValue("Description")
+                        ));
+                }
+            }
+            return devices;
+        }
+
+
     }
 }

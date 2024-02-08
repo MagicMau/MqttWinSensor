@@ -32,6 +32,7 @@
 		<PackageReference Include="ManagedNativeWifi" Version="2.5.0" />
 		<PackageReference Include="Mqttnet" Version="4.2.1.781" />
 		<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+		<PackageReference Include="System.Management" Version="8.0.0" />
 	</ItemGroup>
 
 	<ItemGroup>

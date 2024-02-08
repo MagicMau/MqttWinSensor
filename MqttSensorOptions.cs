@@ -23,5 +23,6 @@ namespace MqttWinSensor
         public IEnumerable<string> WifiNetworks { get; set; } = Array.Empty<string>();
         public bool IsCheckForPower { get; set; } = false;
         public bool IsCheckForWifi { get; set; } = false;
+        public string CheckComPort { get; set; } = string.Empty;
     }
 }
