@@ -132,7 +132,8 @@ namespace MqttWinSensor
         /// <param name="e"></param>
         protected override async void OnStartup(StartupEventArgs e)
         {
-            await UpdateStateAsync(true, "Started");
+            await RunHyperionRemote(false);
+            bool success = await UpdateStateAsync(true, "Started");
 
             SystemEvents.SessionSwitch += SystemEvents_SessionSwitch;
 
@@ -142,7 +143,7 @@ namespace MqttWinSensor
 
             if (teamsPresenceIndicator != null)
                 teamsPresenceIndicator.Start(cancellationTokenSource.Token);
-            await RunHyperionRemote(true);
+            await RunHyperionRemote(success);
         }
 
         protected override async void OnExit(ExitEventArgs e)
@@ -164,8 +165,10 @@ namespace MqttWinSensor
 
         private async Task<bool> UpdateStateAsync(bool isEnabled, string reason)
         {
-            SetTooltip(reason);
-            return await mqttBinarySensor.UpdateStateAsync(isEnabled, cancellationTokenSource.Token);
+            SetTooltip("Connecting");
+            bool success = await mqttBinarySensor.UpdateStateAsync(isEnabled, cancellationTokenSource.Token);
+            SetTooltip(reason + " - " + (success ? "Connected" : "Not connected"));
+            return success;
         }
 
         private async void SystemEvents_SessionSwitch(object sender, SessionSwitchEventArgs e)
@@ -180,10 +183,8 @@ namespace MqttWinSensor
                 case SessionSwitchReason.SessionUnlock: isEnabled = true; reason = "Unlocked"; break;
             }
 
-            if ((await UpdateStateAsync(isEnabled, reason)))
-            {
-                await RunHyperionRemote(isEnabled);
-            }
+            bool success = await UpdateStateAsync(isEnabled, reason);
+            await RunHyperionRemote(isEnabled && success);
         }
 
         private async Task RunHyperionRemote(bool isEnabled)
