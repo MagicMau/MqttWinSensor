@@ -135,6 +135,7 @@ namespace MqttWinSensor
                     return true;
 
                 await Task.Delay(2000, cancellationToken);
+                attempts++;
             }
 
             return false;
