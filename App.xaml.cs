@@ -198,7 +198,7 @@ namespace MqttWinSensor
                 UseShellExecute = false,
                 WindowStyle = ProcessWindowStyle.Hidden,
                 RedirectStandardOutput = true,
-                Arguments = isEnabled ? "--on" : "--off"
+                Arguments = isEnabled ? "--resume" : "--suspend"
             };
             try
             {
