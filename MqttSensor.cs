@@ -179,9 +179,9 @@ namespace MqttWinSensor
         /// <returns></returns>
         private async Task<bool> PublishWithNoCheckAsync(MqttApplicationMessage[] applicationMessages, CancellationToken cancellationToken)
         {
-            using var mqttClient = mqttFactory.CreateMqttClient();
             try
             {
+                using var mqttClient = mqttFactory.CreateMqttClient();
                 await mqttClient.ConnectAsync(mqttClientOptions, cancellationToken);
 
                 foreach (var applicationMessage in applicationMessages)
@@ -206,12 +206,17 @@ namespace MqttWinSensor
         /// <returns></returns>
         private bool CheckForWifi()
         {
-            var networks = NativeWifi.EnumerateConnectedNetworkSsids();
-            bool isConnectedToHome = networks.Any(n => options.WifiNetworks.Any(w => w.Equals(n.ToString(), StringComparison.OrdinalIgnoreCase)));
+            try
+            {
+                var networks = NativeWifi.EnumerateConnectedNetworkSsids();
+                bool isConnectedToHome = networks.Any(n => options.WifiNetworks.Any(w => w.Equals(n.ToString(), StringComparison.OrdinalIgnoreCase)));
 
-            if (isConnectedToHome)
-                return true;
-
+                if (isConnectedToHome)
+                    return true;
+            }
+            catch
+            {
+            }
             return false;
         }
 
@@ -226,19 +231,23 @@ namespace MqttWinSensor
 
         private static bool CheckComPort(string comPort)
         {
-            var serialDevices = GetSerialDevices();
-
-            foreach (var serialDevice in serialDevices)
+            try
             {
-                // grab the com port from the registry
-                string regPath = "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Enum\\" + serialDevice.DeviceID + "\\Device Parameters";
-                string portName = Registry.GetValue(regPath, "PortName", "")?.ToString() ?? string.Empty;
+                var serialDevices = GetSerialDevices();
 
-                if (portName.Equals(comPort, StringComparison.OrdinalIgnoreCase))
+                foreach (var serialDevice in serialDevices)
                 {
-                    return true;
+                    // grab the com port from the registry
+                    string regPath = "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Enum\\" + serialDevice.DeviceID + "\\Device Parameters";
+                    string portName = Registry.GetValue(regPath, "PortName", "")?.ToString() ?? string.Empty;
+
+                    if (portName.Equals(comPort, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
                 }
             }
+            catch { }
             return false;
         }
 
