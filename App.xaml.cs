@@ -192,25 +192,32 @@ namespace MqttWinSensor
             if (string.IsNullOrEmpty(hyperionRemotePath))
                 return;
 
-            var startInfo = new ProcessStartInfo(hyperionRemotePath)
+            string[] argumentsList = isEnabled
+                ? ["--enable LEDDEVICE", "--resume"]
+                : ["--suspend", "--disable LEDDEVICE"];
+
+            foreach (string arguments in argumentsList)
             {
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                WindowStyle = ProcessWindowStyle.Hidden,
-                RedirectStandardOutput = true,
-                Arguments = isEnabled ? "--resume" : "--suspend"
-            };
-            try
-            {
-                using Process? process = Process.Start(startInfo);
-                if (process != null)
+                var startInfo = new ProcessStartInfo(hyperionRemotePath)
                 {
-                    await process.WaitForExitAsync(cancellationTokenSource.Token);
-                    string output = process.StandardOutput.ReadToEnd();
-                    Trace.TraceInformation(output);
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                    RedirectStandardOutput = true,
+                    Arguments = arguments
+                };
+                try
+                {
+                    using Process? process = Process.Start(startInfo);
+                    if (process != null)
+                    {
+                        await process.WaitForExitAsync(cancellationTokenSource.Token);
+                        string output = process.StandardOutput.ReadToEnd();
+                        Trace.TraceInformation(output);
+                    }
                 }
+                catch { }
             }
-            catch { }
         }
 
         private async void DispatcherTimer_Tick(object? sender, EventArgs e)
